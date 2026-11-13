@@ -887,6 +887,46 @@ func TestOpenCodeSession(t *testing.T) {
 	}
 }
 
+func TestOpenAIThoughtSignature(t *testing.T) {
+	// Gemini's OpenAI-compatible API refuses a tool call that goes back
+	// without the thought signature it came with (#105).
+	var bodies []map[string]any
+	hc := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
+		answer := `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`
+		if len(bodies) == 1 {
+			answer = `{"choices":[{"message":{"role":"assistant","tool_calls":[` +
+				`{"id":"c1","type":"function","function":{"name":"phone_apps","arguments":"{}"},"extra_content":{"google":{"thought_signature":"sig-A"}}},` +
+				`{"id":"c2","type":"function","function":{"name":"phone_observe","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Request: r, Body: io.NopCloser(strings.NewReader(answer))}, nil
+	})}
+	o := newOpenAI(Config{Provider: OpenAI, Model: "gemini-4-hydrogen", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"}, "k", hc, "sys", nil)
+	if _, err := o.send(context.Background(), nil, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.send(context.Background(), []result{{id: "c1", text: "apps"}, {id: "c2", text: "screen"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := bodies[1]["messages"].([]any)
+	asst, _ := msgs[2].(map[string]any)
+	calls, _ := asst["tool_calls"].([]any)
+	if len(calls) != 2 {
+		t.Fatalf("assistant message: %v", asst)
+	}
+	first, _ := calls[0].(map[string]any)
+	extra, _ := first["extra_content"].(map[string]any)
+	google, _ := extra["google"].(map[string]any)
+	if google["thought_signature"] != "sig-A" {
+		t.Fatalf("first call went back without its signature: %v", first)
+	}
+	if second, _ := calls[1].(map[string]any); second["extra_content"] != nil {
+		t.Fatalf("second call got extra_content it did not have: %v", second)
+	}
+}
+
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

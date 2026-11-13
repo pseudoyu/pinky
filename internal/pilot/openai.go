@@ -71,6 +71,10 @@ type oaToolCall struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
+	// ExtraContent goes back as it came: Gemini puts a call's thought
+	// signature there (google.thought_signature) and refuses a call sent
+	// back without it.
+	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
 type oaResponse struct {
